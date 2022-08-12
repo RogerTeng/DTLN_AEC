@@ -1,0 +1,75 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="來源檔案">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="標頭檔">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="資源檔">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="來源檔案\kissfft">
+      <UniqueIdentifier>{1f5dc309-f618-4403-91fa-773593436036}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="標頭檔\kissfft">
+      <UniqueIdentifier>{a7f2f81c-c83d-4d95-991c-e599b7b7cd99}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="DTLN_AEC.cpp">
+      <Filter>來源檔案</Filter>
+    </ClCompile>
+    <ClCompile Include="kissfft\kfc.c">
+      <Filter>來源檔案\kissfft</Filter>
+    </ClCompile>
+    <ClCompile Include="kissfft\kiss_fft.c">
+      <Filter>來源檔案\kissfft</Filter>
+    </ClCompile>
+    <ClCompile Include="kissfft\kiss_fftnd.c">
+      <Filter>來源檔案\kissfft</Filter>
+    </ClCompile>
+    <ClCompile Include="kissfft\kiss_fftndr.c">
+      <Filter>來源檔案\kissfft</Filter>
+    </ClCompile>
+    <ClCompile Include="kissfft\kiss_fftr.c">
+      <Filter>來源檔案\kissfft</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="DTLN_AEC.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="kissfft\_kiss_fft_guts.h">
+      <Filter>標頭檔\kissfft</Filter>
+    </ClInclude>
+    <ClInclude Include="kissfft\kfc.h">
+      <Filter>標頭檔\kissfft</Filter>
+    </ClInclude>
+    <ClInclude Include="kissfft\kiss_fft.h">
+      <Filter>標頭檔\kissfft</Filter>
+    </ClInclude>
+    <ClInclude Include="kissfft\kiss_fft_log.h">
+      <Filter>標頭檔\kissfft</Filter>
+    </ClInclude>
+    <ClInclude Include="kissfft\kiss_fftnd.h">
+      <Filter>標頭檔\kissfft</Filter>
+    </ClInclude>
+    <ClInclude Include="kissfft\kiss_fftndr.h">
+      <Filter>標頭檔\kissfft</Filter>
+    </ClInclude>
+    <ClInclude Include="kissfft\kiss_fftr.h">
+      <Filter>標頭檔\kissfft</Filter>
+    </ClInclude>
+    <ClInclude Include="kissfft\kissfft.hh">
+      <Filter>標頭檔\kissfft</Filter>
+    </ClInclude>
+    <ClInclude Include="kissfft\kissfft_i32.hh">
+      <Filter>標頭檔\kissfft</Filter>
+    </ClInclude>
+  </ItemGroup>
+</Project>
