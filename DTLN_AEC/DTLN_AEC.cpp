@@ -1,442 +1,423 @@
-﻿
 
-#include <tensorflow/lite/c/common.h>
+
+// NOLINTBEGIN
 #include <tensorflow/lite/c/c_api.h>
+#include <tensorflow/lite/c/common.h>
+
+#include <climits>
+#include <cmath>
+#include <cstring>
 
 #include "dtln_aec_128_1.h"
 #include "dtln_aec_128_2.h"
 
-//Use KissFFT https://github.com/mborgerding/kissfft
-#include "kiss_fftr.h"
-
+// Use KissFFT https://github.com/mborgerding/kissfft
 #include "DTLN_AEC.h"
+#include "kiss_fftr.h"
+// NOLINTEND
 
-//1 Network contain 2 models
-//Please check : https://github.com/breizhn/DTLN-aec
-//This code is translate from : https://github.com/breizhn/DTLN-aec/blob/main/run_aec.py
+// 1 Network contain 2 models
+// Please check : https://github.com/breizhn/DTLN-aec
+// This code is translate from :
+// https://github.com/breizhn/DTLN-aec/blob/main/run_aec.py
 
-//const param
-constexpr auto k_nWindowSize = 512;
-constexpr auto k_nWindowShift = 128;
-constexpr auto k_nFftForTensorSize = (k_nWindowSize / 2 + 1);
+// const param
+constexpr int kWindowSize = 512;
+constexpr int kWindowShift = 128;
+constexpr int kFftForTensorSize = (kWindowSize / 2 + 1);
 
-constexpr auto k_nNumModels = 2;
+constexpr int kNumModels = 2;
 
-constexpr auto k_nNumThreads = 1;
+constexpr int kNumThreads = 1;
 
-class DTLN_AEC::m_Impl
-{
-public:
-	
-	int Init(void);
-	void Release(void);
+class DTLN_AEC::Impl {
+ public:
+  int Init();
+  void Release();
 
-	int Process(short *lpsRefBuffer, short *lpsRecBuffer, short *lpsOutputBuffer);
-	void AEC(void);
+  int Process(short *ref_buffer, short *rec_buffer, short *output_buffer);
+  void AEC();
 
-	TfLiteModel *m_lppoTfliteModel[k_nNumModels];
-	TfLiteInterpreter *m_lppoInterpreter[k_nNumModels];
-	TfLiteInterpreterOptions *m_lpoInterpreterOptions = nullptr;
+  TfLiteModel *tflite_models_[kNumModels];
+  TfLiteInterpreter *interpreters_[kNumModels];
+  TfLiteInterpreterOptions *interpreter_options_ = nullptr;
 
-	TfLiteTensor *m_lppoInputTensor[k_nNumModels][3];
-	const TfLiteTensor *m_lppoOutputTensor[k_nNumModels][2];
+  TfLiteTensor *input_tensors_[kNumModels][3];
+  const TfLiteTensor *output_tensors_[kNumModels][2];
 
-	//FFT
-	kiss_fftr_cfg m_lpoFftrCfg = nullptr;
-	kiss_fftr_cfg m_lpoIfftrCfg = nullptr;
+  // FFT
+  kiss_fftr_cfg fftr_cfg_ = nullptr;
+  kiss_fftr_cfg ifftr_cfg_ = nullptr;
 
-	kiss_fft_cpx *m_lpoInputRefCpx = nullptr;
-	kiss_fft_cpx *m_lpoInputRecCpx = nullptr;
-	kiss_fft_cpx *m_lpoOutputCpx = nullptr;
+  kiss_fft_cpx *input_ref_cpx_ = nullptr;
+  kiss_fft_cpx *input_rec_cpx_ = nullptr;
+  kiss_fft_cpx *output_cpx_ = nullptr;
 
-	//Internal buffer
-	float *m_lpfInputRefBuffer = nullptr;
-	float *m_lpfInputRecBuffer = nullptr;
-	float *m_lpfOutputBuffer = nullptr;
+  // Internal buffer
+  float *input_ref_buffer_ = nullptr;
+  float *input_rec_buffer_ = nullptr;
+  float *output_buffer_ = nullptr;
 
-	float *m_lpfDtlnFreqOutput = nullptr;
-	float *m_lpfDtlnTimeOutput = nullptr;
+  float *dtln_freq_output_ = nullptr;
+  float *dtln_time_output_ = nullptr;
 
-	int m_lpnStateSize[k_nNumModels];
-	float *m_lppfStates[k_nNumModels];
+  int state_size_[kNumModels];
+  float *states_[kNumModels];
 
-	float *m_lpfInputRefMag = nullptr;
-	float *m_lpfInputRefPhase = nullptr;
-	
-	float *m_lpfInputRecMag = nullptr;
-	float *m_lpfInputRecPhase = nullptr;
+  float *input_ref_mag_ = nullptr;
+  float *input_ref_phase_ = nullptr;
 
-	float *m_lpfEstimatedBlock = nullptr;
+  float *input_rec_mag_ = nullptr;
+  float *input_rec_phase_ = nullptr;
 
-	//Format change buffer
-	float *m_lpfInputRefSample = nullptr;
-	float *m_lpfInputRecSample = nullptr;
-	float *m_lpfOutputSample = nullptr;
+  float *estimated_block_ = nullptr;
 
-	bool m_bInitSuccess = false;
-		
+  // Format change buffer
+  float *input_ref_sample_ = nullptr;
+  float *input_rec_sample_ = nullptr;
+  float *output_sample_ = nullptr;
+
+  bool init_success_ = false;
 };
 
-int DTLN_AEC::m_Impl::Init(void)
-{
-	int nRet = -1;
+int DTLN_AEC::Impl::Init() {
+  int ret = -1;
 
-	do 
-	{
-		for (int i = 0; i < k_nNumModels; i++)
-		{
-			this->m_lppoTfliteModel[i] = nullptr;
-			this->m_lppoInterpreter[i] = nullptr;
+  do {
+    for (int i = 0; i < kNumModels; i++) {
+      tflite_models_[i] = nullptr;
+      interpreters_[i] = nullptr;
 
-			this->m_lppfStates[i] = nullptr;
-		}
+      states_[i] = nullptr;
+    }
 
-		//Load models
-		this->m_lppoTfliteModel[0] = TfLiteModelCreate(k_lpszModel1Tflite, k_nModel1TfliteLen);
-		this->m_lppoTfliteModel[1] = TfLiteModelCreate(k_lpszModel2Tflite, k_nModel2TfliteLen);
+    // Load models
+    tflite_models_[0] =
+        TfLiteModelCreate(k_lpszModel1Tflite, k_nModel1TfliteLen);
+    tflite_models_[1] =
+        TfLiteModelCreate(k_lpszModel2Tflite, k_nModel2TfliteLen);
 
-		if (this->m_lppoTfliteModel[0] == nullptr || this->m_lppoTfliteModel[1] == nullptr)
-			break;
+    if (tflite_models_[0] == nullptr || tflite_models_[1] == nullptr) break;
 
-		//Create option
-		this->m_lpoInterpreterOptions = TfLiteInterpreterOptionsCreate();
-		TfLiteInterpreterOptionsSetNumThreads(this->m_lpoInterpreterOptions, k_nNumThreads);
+    // Create option
+    interpreter_options_ = TfLiteInterpreterOptionsCreate();
+    TfLiteInterpreterOptionsSetNumThreads(interpreter_options_, kNumThreads);
 
-		//Create the interpreter
-		this->m_lppoInterpreter[0] = TfLiteInterpreterCreate(this->m_lppoTfliteModel[0], this->m_lpoInterpreterOptions);
-		this->m_lppoInterpreter[1] = TfLiteInterpreterCreate(this->m_lppoTfliteModel[1], this->m_lpoInterpreterOptions);
+    // Create the interpreter
+    interpreters_[0] =
+        TfLiteInterpreterCreate(tflite_models_[0], interpreter_options_);
+    interpreters_[1] =
+        TfLiteInterpreterCreate(tflite_models_[1], interpreter_options_);
 
-		if (this->m_lppoInterpreter[0] == nullptr || this->m_lppoInterpreter[1] == nullptr)
-			break;
+    if (interpreters_[0] == nullptr || interpreters_[1] == nullptr) break;
 
-		//Allocate tensor
-		if (TfLiteInterpreterAllocateTensors(this->m_lppoInterpreter[0]) != kTfLiteOk)
-			break;
-		if (TfLiteInterpreterAllocateTensors(this->m_lppoInterpreter[1]) != kTfLiteOk)
-			break;
+    // Allocate tensor
+    if (TfLiteInterpreterAllocateTensors(interpreters_[0]) != kTfLiteOk) break;
+    if (TfLiteInterpreterAllocateTensors(interpreters_[1]) != kTfLiteOk) break;
 
-		//When use original model
-		//Input tensor order:
-		//Model_1[] = {rec, state, ref}
-		//Model_2[] = {est, state, ref}
-		//When use quantized models in PiDTLN
-		//Input tensor order:
-		//Model_1[] = {rec, ref, state}
-		//Model_2[] = {ref, state, est}
-		for (int i = 0; i < k_nNumModels; i++)
-		{
-			this->m_lppoInputTensor[i][0] = TfLiteInterpreterGetInputTensor(this->m_lppoInterpreter[i], 0);
-			this->m_lppoInputTensor[i][1] = TfLiteInterpreterGetInputTensor(this->m_lppoInterpreter[i], 1);
-			this->m_lppoInputTensor[i][2] = TfLiteInterpreterGetInputTensor(this->m_lppoInterpreter[i], 2);
+    // When use original model
+    // Input tensor order:
+    // Model_1[] = {rec, state, ref}
+    // Model_2[] = {est, state, ref}
+    // When use quantized models in PiDTLN
+    // Input tensor order:
+    // Model_1[] = {rec, ref, state}
+    // Model_2[] = {ref, state, est}
+    for (int i = 0; i < kNumModels; i++) {
+      input_tensors_[i][0] =
+          TfLiteInterpreterGetInputTensor(interpreters_[i], 0);
+      input_tensors_[i][1] =
+          TfLiteInterpreterGetInputTensor(interpreters_[i], 1);
+      input_tensors_[i][2] =
+          TfLiteInterpreterGetInputTensor(interpreters_[i], 2);
 
-			this->m_lppoOutputTensor[i][0] = TfLiteInterpreterGetOutputTensor(this->m_lppoInterpreter[i], 0);
-			this->m_lppoOutputTensor[i][1] = TfLiteInterpreterGetOutputTensor(this->m_lppoInterpreter[i], 1);
+      output_tensors_[i][0] =
+          TfLiteInterpreterGetOutputTensor(interpreters_[i], 0);
+      output_tensors_[i][1] =
+          TfLiteInterpreterGetOutputTensor(interpreters_[i], 1);
 
-			this->m_lpnStateSize[i] = this->m_lppoInputTensor[i][1]->bytes / sizeof(float);
-		}
+      state_size_[i] = input_tensors_[i][1]->bytes / sizeof(float);
+    }
 
-		//RFFT/iRFFT
-		this->m_lpoFftrCfg = kiss_fftr_alloc(k_nWindowSize, 0, 0, 0);
-		this->m_lpoIfftrCfg = kiss_fftr_alloc(k_nWindowSize, 1, 0, 0);
-	
-		this->m_lpoInputRefCpx = new kiss_fft_cpx[k_nFftForTensorSize];
-		this->m_lpoInputRecCpx = new kiss_fft_cpx[k_nFftForTensorSize];
-		this->m_lpoOutputCpx = new kiss_fft_cpx[k_nFftForTensorSize];
+    // RFFT/iRFFT
+    fftr_cfg_ = kiss_fftr_alloc(kWindowSize, 0, 0, 0);
+    ifftr_cfg_ = kiss_fftr_alloc(kWindowSize, 1, 0, 0);
 
-		//Internal buffer
-		this->m_lpfInputRefBuffer = new float[k_nWindowSize];
-		this->m_lpfInputRecBuffer = new float[k_nWindowSize];
-		this->m_lpfOutputBuffer = new float[k_nWindowSize];
+    input_ref_cpx_ = new kiss_fft_cpx[kFftForTensorSize];
+    input_rec_cpx_ = new kiss_fft_cpx[kFftForTensorSize];
+    output_cpx_ = new kiss_fft_cpx[kFftForTensorSize];
 
-		memset(this->m_lpfInputRefBuffer, 0, k_nWindowSize * sizeof(float));
-		memset(this->m_lpfInputRecBuffer, 0, k_nWindowSize * sizeof(float));
-		memset(this->m_lpfOutputBuffer, 0, k_nWindowSize * sizeof(float));
+    // Internal buffer
+    input_ref_buffer_ = new float[kWindowSize];
+    input_rec_buffer_ = new float[kWindowSize];
+    output_buffer_ = new float[kWindowSize];
 
-		this->m_lpfDtlnFreqOutput = new float[k_nFftForTensorSize];
-		this->m_lpfDtlnTimeOutput = new float[k_nWindowSize];
+    memset(input_ref_buffer_, 0, kWindowSize * sizeof(float));
+    memset(input_rec_buffer_, 0, kWindowSize * sizeof(float));
+    memset(output_buffer_, 0, kWindowSize * sizeof(float));
 
-		memset(this->m_lpfDtlnFreqOutput, 0, k_nFftForTensorSize * sizeof(float));
-		memset(this->m_lpfDtlnTimeOutput, 0, k_nWindowSize * sizeof(float));
+    dtln_freq_output_ = new float[kFftForTensorSize];
+    dtln_time_output_ = new float[kWindowSize];
 
-		this->m_lpfInputRefMag = new float[k_nFftForTensorSize];
-		this->m_lpfInputRefPhase = new float[k_nFftForTensorSize];
+    memset(dtln_freq_output_, 0, kFftForTensorSize * sizeof(float));
+    memset(dtln_time_output_, 0, kWindowSize * sizeof(float));
 
-		memset(this->m_lpfInputRefMag, 0, k_nFftForTensorSize * sizeof(float));
-		memset(this->m_lpfInputRefPhase, 0, k_nFftForTensorSize * sizeof(float));
+    input_ref_mag_ = new float[kFftForTensorSize];
+    input_ref_phase_ = new float[kFftForTensorSize];
 
-		this->m_lpfInputRecMag = new float[k_nFftForTensorSize];
-		this->m_lpfInputRecPhase = new float[k_nFftForTensorSize];
+    memset(input_ref_mag_, 0, kFftForTensorSize * sizeof(float));
+    memset(input_ref_phase_, 0, kFftForTensorSize * sizeof(float));
 
-		memset(this->m_lpfInputRecMag, 0, k_nFftForTensorSize * sizeof(float));
-		memset(this->m_lpfInputRecPhase, 0, k_nFftForTensorSize * sizeof(float));
+    input_rec_mag_ = new float[kFftForTensorSize];
+    input_rec_phase_ = new float[kFftForTensorSize];
 
-		this->m_lpfEstimatedBlock = new float[k_nWindowSize];
+    memset(input_rec_mag_, 0, kFftForTensorSize * sizeof(float));
+    memset(input_rec_phase_, 0, kFftForTensorSize * sizeof(float));
 
-		memset(this->m_lpfEstimatedBlock, 0, k_nWindowSize * sizeof(float));
+    estimated_block_ = new float[kWindowSize];
 
+    memset(estimated_block_, 0, kWindowSize * sizeof(float));
 
-		for (int i = 0; i < k_nNumModels; i++)
-		{
-			this->m_lppfStates[i] = new float[this->m_lpnStateSize[i]];
-			memset(this->m_lppfStates[i], 0, this->m_lpnStateSize[i] * sizeof(float));
-		}
-		
-		//Format change buffer
-		this->m_lpfInputRefSample = new float[k_nWindowSize];
-		this->m_lpfInputRecSample = new float[k_nWindowSize];
-		this->m_lpfOutputSample = new float[k_nWindowSize];
+    for (int i = 0; i < kNumModels; i++) {
+      states_[i] = new float[state_size_[i]];
+      memset(states_[i], 0, state_size_[i] * sizeof(float));
+    }
 
-		memset(this->m_lpfInputRefSample, 0, k_nWindowSize * sizeof(float));
-		memset(this->m_lpfInputRecSample, 0, k_nWindowSize * sizeof(float));
-		memset(this->m_lpfOutputSample, 0, k_nWindowSize * sizeof(float));
+    // Format change buffer
+    input_ref_sample_ = new float[kWindowSize];
+    input_rec_sample_ = new float[kWindowSize];
+    output_sample_ = new float[kWindowSize];
 
-		this->m_bInitSuccess = true;
+    memset(input_ref_sample_, 0, kWindowSize * sizeof(float));
+    memset(input_rec_sample_, 0, kWindowSize * sizeof(float));
+    memset(output_sample_, 0, kWindowSize * sizeof(float));
 
-		nRet = k_nWindowSize;
+    init_success_ = true;
 
-	}
-	while (0);
+    ret = kWindowSize;
 
-	return nRet;
+  } while (0);
+
+  return ret;
 }
 
-void DTLN_AEC::m_Impl::Release(void)
-{
-	//Tensorflow lite
-	for (int i = 0; i < k_nNumModels; i++)
-	{
-		if (this->m_lppoTfliteModel[i] != nullptr)
-			TfLiteModelDelete(this->m_lppoTfliteModel[i]);
+void DTLN_AEC::Impl::Release() {
+  // Tensorflow lite
+  for (int i = 0; i < kNumModels; i++) {
+    if (tflite_models_[i] != nullptr) TfLiteModelDelete(tflite_models_[i]);
 
-		if (this->m_lppoInterpreter[i] != nullptr)
-			TfLiteInterpreterDelete(this->m_lppoInterpreter[i]);
-	}
+    if (interpreters_[i] != nullptr) TfLiteInterpreterDelete(interpreters_[i]);
+  }
 
-	if (this->m_lpoInterpreterOptions != nullptr)
-		TfLiteInterpreterOptionsDelete(this->m_lpoInterpreterOptions);
+  if (interpreter_options_ != nullptr)
+    TfLiteInterpreterOptionsDelete(interpreter_options_);
 
-	//RFFT/iRFFT
-	if (this->m_lpoFftrCfg != nullptr)
-		kiss_fft_free(this->m_lpoFftrCfg);
+  // RFFT/iRFFT
+  if (fftr_cfg_ != nullptr) kiss_fft_free(fftr_cfg_);
 
-	if (this->m_lpoIfftrCfg != nullptr)
-		kiss_fft_free(this->m_lpoIfftrCfg);
+  if (ifftr_cfg_ != nullptr) kiss_fft_free(ifftr_cfg_);
 
-	if (this->m_lpoInputRefCpx != nullptr)
-		delete[] this->m_lpoInputRefCpx;
+  if (input_ref_cpx_ != nullptr) delete[] input_ref_cpx_;
 
-	if (this->m_lpoInputRecCpx != nullptr)
-		delete[] this->m_lpoInputRecCpx;
+  if (input_rec_cpx_ != nullptr) delete[] input_rec_cpx_;
 
-	if (this->m_lpoOutputCpx != nullptr)
-		delete[] this->m_lpoOutputCpx;
+  if (output_cpx_ != nullptr) delete[] output_cpx_;
 
+  // Internal buffer
+  if (input_ref_buffer_ != nullptr) delete[] input_ref_buffer_;
 
-	//Internal buffer
-	if (this->m_lpfInputRefBuffer != nullptr)
-		delete[] this->m_lpfInputRefBuffer;
+  if (input_rec_buffer_ != nullptr) delete[] input_rec_buffer_;
 
-	if (this->m_lpfInputRecBuffer != nullptr)
-		delete[] this->m_lpfInputRecBuffer;
+  if (output_buffer_ != nullptr) delete[] output_buffer_;
 
-	if (this->m_lpfOutputBuffer != nullptr)
-		delete[] this->m_lpfOutputBuffer;
+  if (dtln_freq_output_ != nullptr) delete[] dtln_freq_output_;
 
-	if (this->m_lpfDtlnFreqOutput != nullptr)
-		delete[] this->m_lpfDtlnFreqOutput;
+  if (dtln_time_output_ != nullptr) delete[] dtln_time_output_;
 
-	if (this->m_lpfDtlnTimeOutput != nullptr)
-		delete[] this->m_lpfDtlnTimeOutput;
+  for (int i = 0; i < kNumModels; i++) {
+    if (states_[i] != nullptr) delete[] states_[i];
+  }
 
-	for (int i = 0; i < k_nNumModels; i++)
-	{
-		if (this->m_lppfStates[i] != nullptr)
-			delete[] this->m_lppfStates[i];
-	}
+  if (input_ref_mag_ != nullptr) delete[] input_ref_mag_;
 
-	if (this->m_lpfInputRefMag != nullptr)
-		delete[] this->m_lpfInputRefMag;
+  if (input_ref_phase_ != nullptr) delete[] input_ref_phase_;
 
-	if (this->m_lpfInputRefPhase != nullptr)
-		delete[] this->m_lpfInputRefPhase;
+  if (input_rec_mag_ != nullptr) delete[] input_rec_mag_;
 
-	if (this->m_lpfInputRecMag != nullptr)
-		delete[] this->m_lpfInputRecMag;
+  if (input_rec_phase_ != nullptr) delete[] input_rec_phase_;
 
-	if (this->m_lpfInputRecPhase != nullptr)
-		delete[] this->m_lpfInputRecPhase;
+  if (estimated_block_ != nullptr) delete[] estimated_block_;
 
-	if (this->m_lpfEstimatedBlock != nullptr)
-		delete[] this->m_lpfEstimatedBlock;
+  // Format change buffer
+  if (input_ref_sample_ != nullptr) delete[] input_ref_sample_;
 
-	//Format change buffer
-	if (this->m_lpfInputRefSample != nullptr)
-		delete[] this->m_lpfInputRefSample;
+  if (input_rec_sample_ != nullptr) delete[] input_rec_sample_;
 
-	if (this->m_lpfInputRecSample != nullptr)
-		delete[] this->m_lpfInputRecSample;
-
-	if (this->m_lpfOutputSample != nullptr)
-		delete[] this->m_lpfOutputSample;
+  if (output_sample_ != nullptr) delete[] output_sample_;
 }
 
-int DTLN_AEC::m_Impl::Process(short *lpsRefBuffer, short *lpsRecBuffer, short *lpsOutputBuffer)
-{
-	int nRet = -1;
+int DTLN_AEC::Impl::Process(short *ref_buffer, short *rec_buffer,
+                            short *output_buffer) {
+  int ret = -1;
 
-	do
-	{
-		if (this->m_bInitSuccess == false)
-			break;
+  do {
+    if (init_success_ == false) break;
 
-		if (lpsRefBuffer == nullptr || lpsRecBuffer == nullptr || lpsOutputBuffer == nullptr)
-			break;
+    if (ref_buffer == nullptr || rec_buffer == nullptr ||
+        output_buffer == nullptr)
+      break;
 
-		//Convert short to float
-		for (int i = 0; i < k_nWindowSize; i++)
-		{
-			this->m_lpfInputRefSample[i] = (float)lpsRefBuffer[i] * 1.0f / SHRT_MAX;
-		}
+    // Convert short to float
+    for (int i = 0; i < kWindowSize; i++) {
+      input_ref_sample_[i] = (float)ref_buffer[i] * 1.0f / SHRT_MAX;
+    }
 
-		for (int i = 0; i < k_nWindowSize; i++)
-		{
-			this->m_lpfInputRecSample[i] = (float)lpsRecBuffer[i] * 1.0f / SHRT_MAX;
-		}
+    for (int i = 0; i < kWindowSize; i++) {
+      input_rec_sample_[i] = (float)rec_buffer[i] * 1.0f / SHRT_MAX;
+    }
 
-		this->AEC();
+    AEC();
 
-		//Convert float to short
-		for (int i = 0; i < k_nWindowSize; i++)
-		{
-			lpsOutputBuffer[i] = (short)(this->m_lpfOutputSample[i] * SHRT_MAX);
-		}
+    // Convert float to short
+    for (int i = 0; i < kWindowSize; i++) {
+      output_buffer[i] = (short)(output_sample_[i] * SHRT_MAX);
+    }
 
-		nRet = 0;
-	} 
-	while (0);
+    ret = 0;
+  } while (0);
 
-	return nRet;
+  return ret;
 }
 
-void DTLN_AEC::m_Impl::AEC(void)
-{
-	int nNumBlocks = k_nWindowSize / k_nWindowShift;
+void DTLN_AEC::Impl::AEC() {
+  int num_blocks = kWindowSize / kWindowShift;
 
-	float *pfInputRefSample = this->m_lpfInputRefSample;
-	float *pfInputRecSample = this->m_lpfInputRecSample;
-	float *pfOutputSample = this->m_lpfOutputSample;
+  float *input_ref_sample = input_ref_sample_;
+  float *input_rec_sample = input_rec_sample_;
+  float *output_sample = output_sample_;
 
-	for (int i = 0; i < nNumBlocks; i++)
-	{
-		//Buffer shift to match FFT size
-		memmove(this->m_lpfInputRefBuffer, this->m_lpfInputRefBuffer + k_nWindowShift, (k_nWindowSize - k_nWindowShift) * sizeof(float));
-		memcpy(this->m_lpfInputRefBuffer + (k_nWindowSize - k_nWindowShift), pfInputRefSample, k_nWindowShift * sizeof(float));
-		
-		memmove(this->m_lpfInputRecBuffer, this->m_lpfInputRecBuffer + k_nWindowShift, (k_nWindowSize - k_nWindowShift) * sizeof(float));
-		memcpy(this->m_lpfInputRecBuffer + (k_nWindowSize - k_nWindowShift), pfInputRecSample, k_nWindowShift * sizeof(float));
+  for (int i = 0; i < num_blocks; i++) {
+    // Buffer shift to match FFT size
+    memmove(input_ref_buffer_, input_ref_buffer_ + kWindowShift,
+            (kWindowSize - kWindowShift) * sizeof(float));
+    memcpy(input_ref_buffer_ + (kWindowSize - kWindowShift), input_ref_sample,
+           kWindowShift * sizeof(float));
 
-		//Prepare buffer
-		memset(this->m_lpfInputRefMag, 0, k_nFftForTensorSize * sizeof(float));
-		memset(this->m_lpfInputRefPhase, 0, k_nFftForTensorSize * sizeof(float));
-		
-		memset(this->m_lpfInputRecMag, 0, k_nFftForTensorSize * sizeof(float));
-		memset(this->m_lpfInputRecPhase, 0, k_nFftForTensorSize * sizeof(float));
-		
-		memset(this->m_lpfEstimatedBlock, 0, k_nWindowSize * sizeof(float));
+    memmove(input_rec_buffer_, input_rec_buffer_ + kWindowShift,
+            (kWindowSize - kWindowShift) * sizeof(float));
+    memcpy(input_rec_buffer_ + (kWindowSize - kWindowShift), input_rec_sample,
+           kWindowShift * sizeof(float));
 
-		//Use RFFT/iRFFT to implement STFT/iSTFT
+    // Prepare buffer
+    memset(input_ref_mag_, 0, kFftForTensorSize * sizeof(float));
+    memset(input_ref_phase_, 0, kFftForTensorSize * sizeof(float));
 
-		//RFFT
-		kiss_fftr(this->m_lpoFftrCfg, this->m_lpfInputRefBuffer, this->m_lpoInputRefCpx);
-		kiss_fftr(this->m_lpoFftrCfg, this->m_lpfInputRecBuffer, this->m_lpoInputRecCpx);
+    memset(input_rec_mag_, 0, kFftForTensorSize * sizeof(float));
+    memset(input_rec_phase_, 0, kFftForTensorSize * sizeof(float));
 
-		//Calculate Mag/Phase
-		for (int j = 0; j < k_nFftForTensorSize; j++)
-		{
-			//How to calculate Mag/Phase:
-			//check 3a/3b in https://www.gaussianwaves.com/2015/11/interpreting-fft-results-obtaining-magnitude-and-phase-information/
-			this->m_lpfInputRefMag[j] = sqrtf(this->m_lpoInputRefCpx[j].r * this->m_lpoInputRefCpx[j].r + this->m_lpoInputRefCpx[j].i * this->m_lpoInputRefCpx[j].i);
-			this->m_lpfInputRefPhase[j] = atan2f(this->m_lpoInputRefCpx[j].i, this->m_lpoInputRefCpx[j].r);
+    memset(estimated_block_, 0, kWindowSize * sizeof(float));
 
-			this->m_lpfInputRecMag[j] = sqrtf(this->m_lpoInputRecCpx[j].r * this->m_lpoInputRecCpx[j].r + this->m_lpoInputRecCpx[j].i * this->m_lpoInputRecCpx[j].i);
-			this->m_lpfInputRecPhase[j] = atan2f(this->m_lpoInputRecCpx[j].i, this->m_lpoInputRecCpx[j].r);
-		}
+    // Use RFFT/iRFFT to implement STFT/iSTFT
 
-		//Set data into tensor
-		TfLiteTensorCopyFromBuffer(this->m_lppoInputTensor[0][0], this->m_lpfInputRecMag, k_nFftForTensorSize * sizeof(float));
-		TfLiteTensorCopyFromBuffer(this->m_lppoInputTensor[0][1], this->m_lppfStates[0], this->m_lpnStateSize[0] * sizeof(float));
-		TfLiteTensorCopyFromBuffer(this->m_lppoInputTensor[0][2], this->m_lpfInputRefMag, k_nFftForTensorSize * sizeof(float));
+    // RFFT
+    kiss_fftr(fftr_cfg_, input_ref_buffer_, input_ref_cpx_);
+    kiss_fftr(fftr_cfg_, input_rec_buffer_, input_rec_cpx_);
 
-		//DTLN for freq domain
-		TfLiteInterpreterInvoke(this->m_lppoInterpreter[0]);
+    // Calculate Mag/Phase
+    for (int j = 0; j < kFftForTensorSize; j++) {
+      // How to calculate Mag/Phase:
+      // check 3a/3b in
+      // https://www.gaussianwaves.com/2015/11/interpreting-fft-results-obtaining-magnitude-and-phase-information/
+      input_ref_mag_[j] = sqrtf(input_ref_cpx_[j].r * input_ref_cpx_[j].r +
+                                input_ref_cpx_[j].i * input_ref_cpx_[j].i);
+      input_ref_phase_[j] = atan2f(input_ref_cpx_[j].i, input_ref_cpx_[j].r);
 
-		//Get data from tensor
-		TfLiteTensorCopyToBuffer(this->m_lppoOutputTensor[0][0], this->m_lpfDtlnFreqOutput, k_nFftForTensorSize * sizeof(float));
-		TfLiteTensorCopyToBuffer(this->m_lppoOutputTensor[0][1], this->m_lppfStates[0], this->m_lpnStateSize[0] * sizeof(float));
+      input_rec_mag_[j] = sqrtf(input_rec_cpx_[j].r * input_rec_cpx_[j].r +
+                                input_rec_cpx_[j].i * input_rec_cpx_[j].i);
+      input_rec_phase_[j] = atan2f(input_rec_cpx_[j].i, input_rec_cpx_[j].r);
+    }
 
-		//iRFFT
-		//this->m_lpfDtlnFreqOutput is out_mask
-		//Use orignal Mag/Phase to restore generated freq
-		for (int j = 0; j < k_nFftForTensorSize; j++)
-		{
-			//Re{ z } = Re{ a + ib } = Mag * cos[φ] * freq
-			//Im{ z } = Im{ a + ib } = Mag * sin[φ] * freq
-			this->m_lpoOutputCpx[j].r = this->m_lpfInputRecMag[j] * cosf(this->m_lpfInputRecPhase[j]) * this->m_lpfDtlnFreqOutput[j];
-			this->m_lpoOutputCpx[j].i = this->m_lpfInputRecMag[j] * sinf(this->m_lpfInputRecPhase[j]) * this->m_lpfDtlnFreqOutput[j];
-		}
+    // Set data into tensor
+    TfLiteTensorCopyFromBuffer(input_tensors_[0][0], input_rec_mag_,
+                               kFftForTensorSize * sizeof(float));
+    TfLiteTensorCopyFromBuffer(input_tensors_[0][1], states_[0],
+                               state_size_[0] * sizeof(float));
+    TfLiteTensorCopyFromBuffer(input_tensors_[0][2], input_ref_mag_,
+                               kFftForTensorSize * sizeof(float));
 
-		kiss_fftri(this->m_lpoIfftrCfg, this->m_lpoOutputCpx, this->m_lpfEstimatedBlock);
+    // DTLN for freq domain
+    TfLiteInterpreterInvoke(interpreters_[0]);
 
-		//FFT coefficient 1/N
-		for (int j = 0; j < k_nWindowSize; j++)
-			this->m_lpfEstimatedBlock[j] = this->m_lpfEstimatedBlock[j] / k_nWindowSize;
+    // Get data from tensor
+    TfLiteTensorCopyToBuffer(output_tensors_[0][0], dtln_freq_output_,
+                             kFftForTensorSize * sizeof(float));
+    TfLiteTensorCopyToBuffer(output_tensors_[0][1], states_[0],
+                             state_size_[0] * sizeof(float));
 
-		//Set data into tensor
-		TfLiteTensorCopyFromBuffer(this->m_lppoInputTensor[1][0], this->m_lpfEstimatedBlock, k_nWindowSize * sizeof(float));
-		TfLiteTensorCopyFromBuffer(this->m_lppoInputTensor[1][1], this->m_lppfStates[1], this->m_lpnStateSize[1] * sizeof(float));
-		TfLiteTensorCopyFromBuffer(this->m_lppoInputTensor[1][2], this->m_lpfInputRefBuffer, k_nWindowSize * sizeof(float));
+    // iRFFT
+    // dtln_freq_output_ is out_mask
+    // Use orignal Mag/Phase to restore generated freq
+    for (int j = 0; j < kFftForTensorSize; j++) {
+      // Re{ z } = Re{ a + ib } = Mag * cos[φ] * freq
+      // Im{ z } = Im{ a + ib } = Mag * sin[φ] * freq
+      output_cpx_[j].r =
+          input_rec_mag_[j] * cosf(input_rec_phase_[j]) * dtln_freq_output_[j];
+      output_cpx_[j].i =
+          input_rec_mag_[j] * sinf(input_rec_phase_[j]) * dtln_freq_output_[j];
+    }
 
-		//DTLN for time domain
-		TfLiteInterpreterInvoke(this->m_lppoInterpreter[1]);
+    kiss_fftri(ifftr_cfg_, output_cpx_, estimated_block_);
 
-		//Get data from tensor
-		TfLiteTensorCopyToBuffer(this->m_lppoOutputTensor[1][0], this->m_lpfDtlnTimeOutput, k_nWindowSize * sizeof(float));
-		TfLiteTensorCopyToBuffer(this->m_lppoOutputTensor[1][1], this->m_lppfStates[1], this->m_lpnStateSize[1] * sizeof(float));
+    // FFT coefficient 1/N
+    for (int j = 0; j < kWindowSize; j++)
+      estimated_block_[j] = estimated_block_[j] / kWindowSize;
 
-		//Overlap add
-		memmove(this->m_lpfOutputBuffer, this->m_lpfOutputBuffer + k_nWindowShift, (k_nWindowSize - k_nWindowShift) * sizeof(float));
-		memset(this->m_lpfOutputBuffer + (k_nWindowSize - k_nWindowShift), 0, k_nWindowShift * sizeof(float));
+    // Set data into tensor
+    TfLiteTensorCopyFromBuffer(input_tensors_[1][0], estimated_block_,
+                               kWindowSize * sizeof(float));
+    TfLiteTensorCopyFromBuffer(input_tensors_[1][1], states_[1],
+                               state_size_[1] * sizeof(float));
+    TfLiteTensorCopyFromBuffer(input_tensors_[1][2], input_ref_buffer_,
+                               kWindowSize * sizeof(float));
 
-		for (int j = 0; j < k_nWindowSize; j++)
-			this->m_lpfOutputBuffer[j] += this->m_lpfDtlnTimeOutput[j];
+    // DTLN for time domain
+    TfLiteInterpreterInvoke(interpreters_[1]);
 
+    // Get data from tensor
+    TfLiteTensorCopyToBuffer(output_tensors_[1][0], dtln_time_output_,
+                             kWindowSize * sizeof(float));
+    TfLiteTensorCopyToBuffer(output_tensors_[1][1], states_[1],
+                             state_size_[1] * sizeof(float));
 
-		memcpy(pfOutputSample, this->m_lpfOutputBuffer, k_nWindowShift * sizeof(float));
+    // Overlap add
+    memmove(output_buffer_, output_buffer_ + kWindowShift,
+            (kWindowSize - kWindowShift) * sizeof(float));
+    memset(output_buffer_ + (kWindowSize - kWindowShift), 0,
+           kWindowShift * sizeof(float));
 
-		pfInputRefSample += k_nWindowShift;
-		pfInputRecSample += k_nWindowShift;
-		pfOutputSample += k_nWindowShift;
-	}
+    for (int j = 0; j < kWindowSize; j++)
+      output_buffer_[j] += dtln_time_output_[j];
+
+    memcpy(output_sample, output_buffer_, kWindowShift * sizeof(float));
+
+    input_ref_sample += kWindowShift;
+    input_rec_sample += kWindowShift;
+    output_sample += kWindowShift;
+  }
 }
 
-DTLN_AEC::DTLN_AEC() :m_lpoImpl(new DTLN_AEC::m_Impl)
-{
+DTLN_AEC::DTLN_AEC() : impl_(new DTLN_AEC::Impl) {}
+
+DTLN_AEC::~DTLN_AEC() {
+  impl_->Release();
+
+  delete impl_;
+  impl_ = nullptr;
 }
 
-DTLN_AEC::~DTLN_AEC()
-{
-	this->m_lpoImpl->Release();
+int DTLN_AEC::Init() { return impl_->Init(); }
 
-	delete this->m_lpoImpl;
-	this->m_lpoImpl = nullptr;
-}
-
-int DTLN_AEC::Init(void)
-{
-	return this->m_lpoImpl->Init();
-}
-
-int DTLN_AEC::Process(short *lpsRefBuffer, short *lpsRecBuffer, short *lpsOutputBuffer)
-{
-	return this->m_lpoImpl->Process(lpsRefBuffer, lpsRecBuffer, lpsOutputBuffer);
+int DTLN_AEC::Process(short *ref_buffer, short *rec_buffer,
+                      short *output_buffer) {
+  return impl_->Process(ref_buffer, rec_buffer, output_buffer);
 }
