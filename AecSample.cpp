@@ -1,72 +1,79 @@
-﻿
-
+#include <cstdio>
 #include <string>
+#include <vector>
+
 #include "DTLN_AEC.h"
 
-int main(int argc, char *argv[])
-{
-    //lpszInputRefWave is a reference data(far end)
-    //lpszInputRecWave is a recording data(near end recording)
+namespace {
+constexpr int kWaveHeaderSize = 44;
+}
 
-    std::string lpszInputRefWave = std::string(argv[1]);
-    std::string lpszInputRecWave = std::string(argv[2]);
-    std::string lpszOutputWave = std::string(argv[3]);
+int main(int argc, char* argv[]) {
+  if (argc < 4) {
+    std::fprintf(stderr,
+                 "Usage: %s <input_ref.wav> <input_rec.wav> <output.pcm>\n",
+                 argv[0]);
+    return 1;
+  }
 
-    FILE *lpoInputRefFile = NULL;
-    FILE *lpoInputRecFile = NULL;
-    FILE *lpoOutputFile = NULL;
+  const std::string input_ref_wave(argv[1]);
+  const std::string input_rec_wave(argv[2]);
+  const std::string output_wave(argv[3]);
 
-    short *lpsInputRefSample = NULL;
-    short *lpsInputRecSample = NULL;
-    short *lpsOutputSample = NULL;
+  FILE* input_ref_file = std::fopen(input_ref_wave.c_str(), "rb");
+  FILE* input_rec_file = std::fopen(input_rec_wave.c_str(), "rb");
+  FILE* output_file = std::fopen(output_wave.c_str(), "wb+");
 
-    int nReadSize, nFrameSize;
+  if (input_ref_file == nullptr || input_rec_file == nullptr ||
+      output_file == nullptr) {
+    std::fprintf(stderr, "Failed to open one or more files.\n");
+    if (input_ref_file != nullptr) std::fclose(input_ref_file);
+    if (input_rec_file != nullptr) std::fclose(input_rec_file);
+    if (output_file != nullptr) std::fclose(output_file);
+    return 1;
+  }
 
-    lpoInputRefFile = fopen(lpszInputRefWave.c_str(), "rb");
-    lpoInputRecFile = fopen(lpszInputRecWave.c_str(), "rb");
-    lpoOutputFile = fopen(lpszOutputWave.c_str(), "wb+");
+  DTLN_AEC dtln_aec;
+  const int frame_size = dtln_aec.Init();
+  if (frame_size <= 0) {
+    std::fprintf(stderr, "DTLN_AEC initialization failed.\n");
+    std::fclose(input_ref_file);
+    std::fclose(input_rec_file);
+    std::fclose(output_file);
+    return 1;
+  }
 
-    DTLN_AEC oDtlnAec;
+  std::vector<short> input_ref_sample(frame_size);
+  std::vector<short> input_rec_sample(frame_size);
+  std::vector<short> output_sample(frame_size);
 
-    nFrameSize = oDtlnAec.Init();
+  // Skip wave header.
+  std::fread(input_ref_sample.data(), 1, kWaveHeaderSize, input_ref_file);
+  std::fread(input_rec_sample.data(), 1, kWaveHeaderSize, input_rec_file);
 
-    lpsInputRefSample = new short[nFrameSize];
-    lpsInputRecSample = new short[nFrameSize];
-    lpsOutputSample = new short[nFrameSize];
-
-    //Skip wave header
-    fread(lpsInputRefSample, 1, 44, lpoInputRefFile);
-    fread(lpsInputRecSample, 1, 44, lpoInputRecFile);
-
-    while (true)
-    {
-        nReadSize = fread(lpsInputRefSample, 1, nFrameSize * sizeof(short), lpoInputRefFile);
-        if (nReadSize <= 0)
-            break;
-
-        nReadSize = fread(lpsInputRecSample, 1, nFrameSize * sizeof(short), lpoInputRecFile);
-        if (nReadSize <= 0)
-            break;
-
-        oDtlnAec.Process(lpsInputRefSample, lpsInputRecSample, lpsOutputSample);
-
-        //write PCM
-        fwrite(lpsOutputSample, 1, nFrameSize * sizeof(short), lpoOutputFile);
+  while (true) {
+    int read_size = std::fread(input_ref_sample.data(), 1,
+                               frame_size * sizeof(short), input_ref_file);
+    if (read_size <= 0) {
+      break;
     }
 
-    fclose(lpoInputRefFile);
-    fclose(lpoInputRecFile);
-    fclose(lpoOutputFile);
+    read_size = std::fread(input_rec_sample.data(), 1,
+                           frame_size * sizeof(short), input_rec_file);
+    if (read_size <= 0) {
+      break;
+    }
 
-    if (lpsInputRefSample != NULL)
-        delete[] lpsInputRefSample;
+    dtln_aec.Process(input_ref_sample.data(), input_rec_sample.data(),
+                     output_sample.data());
 
-    if (lpsInputRecSample != NULL)
-        delete[] lpsInputRecSample;
+    std::fwrite(output_sample.data(), 1, frame_size * sizeof(short),
+                output_file);
+  }
 
-    if (lpsOutputSample != NULL)
-        delete[] lpsOutputSample;
+  std::fclose(input_ref_file);
+  std::fclose(input_rec_file);
+  std::fclose(output_file);
 
-    return 0;
-
+  return 0;
 }
